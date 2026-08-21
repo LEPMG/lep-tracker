@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import { PageHeader, Badge, EmptyState, StatCard } from "@/components/ui";
 import { fmtDateTime, durationSince, fmtNum } from "@/lib/format";
 import { WellFilters } from "@/components/Filters";
+import ReportDownForm from "./ReportDownForm";
 import { reportDowntime, resolveDowntime } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,8 @@ interface DownRow {
   well_name: string | null;
   battery_name: string | null;
   owner_name: string | null;
+  test_water_bwpd: number | null;
+  test_gas_mcfd: number | null;
 }
 
 export default async function DowntimePage({
@@ -44,7 +47,8 @@ export default async function DowntimePage({
   const extra = filt.length ? ` and ${filt.join(" and ")}` : "";
 
   const base = `
-    select d.*, w.name as well_name, b.name as battery_name, u.name as owner_name
+    select d.*, w.name as well_name, b.name as battery_name, u.name as owner_name,
+           w.test_water_bwpd, w.test_gas_mcfd
       from downtime_events d
       left join wells w on w.id = d.well_id
       left join batteries b on b.id = d.battery_id
@@ -59,8 +63,9 @@ export default async function DowntimePage({
       `${base} where d.status='RESOLVED'${extra} order by d.end_at desc limit 100`,
       fp
     ),
-    query<{ id: string; name: string }>(
-      `select id, name from wells where active and status != 'INACTIVE' order by name`
+    query<any>(
+      `select id, name, test_oil_bopd, test_water_bwpd, test_gas_mcfd
+         from wells where active and status != 'INACTIVE' order by name`
     ),
     query<{ id: string; name: string }>(
       `select id, name from users where active order by name`
@@ -82,80 +87,11 @@ export default async function DowntimePage({
         subtitle="Every down event has an owner and a running clock. Nothing disappears — resolved events roll into history."
         action={
           canEdit && (
-            <details className="relative">
-              <summary className="btn-primary cursor-pointer list-none">
-                + Report Down Well
-              </summary>
-              <form
-                action={reportDowntime}
-                className="card absolute right-0 z-20 mt-2 w-96 space-y-3 p-4"
-              >
-                <div>
-                  <label className="label">Well</label>
-                  <select name="well_id" className="input" required>
-                    <option value="">— select well —</option>
-                    {wells.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="label">Reason down *</label>
-                  <input
-                    name="reason"
-                    className="input"
-                    placeholder="Rod parted, pump change, power out…"
-                    required
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="label">Category</label>
-                    <select name="category" className="input">
-                      <option value="">—</option>
-                      <option>Mechanical</option>
-                      <option>Electrical</option>
-                      <option>Facility</option>
-                      <option>Weather</option>
-                      <option>Other</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="label">Est. BOPD loss</label>
-                    <input
-                      name="est_bopd_loss"
-                      type="number"
-                      step="any"
-                      className="input"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="label">Down since</label>
-                    <input
-                      name="start_at"
-                      type="datetime-local"
-                      className="input"
-                    />
-                  </div>
-                  <div>
-                    <label className="label">Owner</label>
-                    <select name="owner_id" className="input">
-                      <option value="">Me</option>
-                      {users.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <button className="btn-primary w-full">Report down</button>
-              </form>
-            </details>
+            <ReportDownForm
+              wells={wells}
+              users={users}
+              action={reportDowntime}
+            />
           )
         }
       />
@@ -206,10 +142,18 @@ export default async function DowntimePage({
                   <div className="mt-1 text-xs text-slate-400">
                     Down since {fmtDateTime(d.start_at)} · Owner:{" "}
                     {d.owner_name || "—"}
-                    {d.est_bopd_loss
-                      ? ` · ~${fmtNum(d.est_bopd_loss, 0)} BOPD loss`
-                      : ""}
                   </div>
+                  {(d.est_bopd_loss ||
+                    d.test_water_bwpd ||
+                    d.test_gas_mcfd) && (
+                    <div className="mt-1 text-xs font-medium text-red-600">
+                      Losing ~{fmtNum(d.est_bopd_loss, 0)} BOPD
+                      {d.test_water_bwpd != null &&
+                        ` · ${fmtNum(d.test_water_bwpd, 0)} BWPD`}
+                      {d.test_gas_mcfd != null &&
+                        ` · ${fmtNum(d.test_gas_mcfd, 0)} MCFD`}
+                    </div>
+                  )}
                 </div>
                 <div className="text-right">
                   <div className="text-lg font-bold text-red-600">

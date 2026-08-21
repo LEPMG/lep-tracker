@@ -50,19 +50,42 @@ async function main() {
     ]);
   }
 
-  // 3) wells
+  // 3) wells (with well-test rates)
   for (const r of parseCsv(readFileSync("public/templates/wells.csv", "utf8"))) {
     const name = pick(r, "well", "name");
     if (!name) continue;
     const bid = batMap.get(pick(r, "battery").toLowerCase()) ?? null;
     const api = sn(pick(r, "api_number", "api"));
     await q(
-      `insert into wells (name,api_number,battery_id,status,field,county,state)
-       values ($1,$2,$3,$4,$5,$6,$7)
-       on conflict (api_number) do update set state=excluded.state`,
-      [name, api, bid, pick(r, "status").toUpperCase() || "UP", sn(pick(r, "field")), sn(pick(r, "county")), sn(pick(r, "state"))]
+      `insert into wells (name,api_number,battery_id,status,field,county,state,
+                          test_oil_bopd,test_water_bwpd,test_gas_mcfd,test_date)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       on conflict (api_number) do update set state=excluded.state,
+         test_oil_bopd=excluded.test_oil_bopd`,
+      [
+        name, api, bid, pick(r, "status").toUpperCase() || "UP",
+        sn(pick(r, "field")), sn(pick(r, "county")), sn(pick(r, "state")),
+        Number(pick(r, "test_oil_bopd")) || null,
+        Number(pick(r, "test_water_bwpd")) || null,
+        Number(pick(r, "test_gas_mcfd")) || null,
+        sn(pick(r, "test_date")),
+      ]
     );
   }
+
+  const jal = await q(
+    `select test_oil_bopd, test_water_bwpd, test_gas_mcfd from wells where name='Jal Unit #1'`
+  );
+  check(
+    "Jal Unit #1 test rates loaded (28/60/120)",
+    Number(jal.rows[0].test_oil_bopd) === 28 &&
+      Number(jal.rows[0].test_water_bwpd) === 60 &&
+      Number(jal.rows[0].test_gas_mcfd) === 120
+  );
+  const nr2 = await q(
+    `select test_oil_bopd from wells where name='North Ranch #2'`
+  );
+  check("North Ranch #2 oil test = 35 (prefills BOPD loss)", Number(nr2.rows[0].test_oil_bopd) === 35);
 
   const counts = await q(`select count(*)::int n from wells`);
   check("wells imported (3 expected)", counts.rows[0].n === 3);

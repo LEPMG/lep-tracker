@@ -75,6 +75,11 @@ create table if not exists wells (
   field       text,
   county      text,
   state       text,
+  -- current well-test rates (used to auto-estimate downtime loss)
+  test_oil_bopd   double precision,
+  test_water_bwpd double precision,
+  test_gas_mcfd   double precision,
+  test_date       date,
   active      boolean not null default true,
   notes       text,
   created_at  timestamptz not null default now(),

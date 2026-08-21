@@ -80,8 +80,8 @@ export default async function ImportPage({
           title="3 · Wells"
           name="wells"
           template="/templates/wells.csv"
-          columns="well, api_number, battery, field, county, state, status (UP/DOWN/SHUT_IN/INACTIVE)"
-          note="'state' and 'field' here are what power the State / Field filters. Mix TX and NM freely."
+          columns="well, api_number, battery, field, county, state, status, test_oil_bopd, test_water_bwpd, test_gas_mcfd, test_date"
+          note="'state'/'field' power the filters. test_oil_bopd / test_water_bwpd / test_gas_mcfd are the well-test rates — the oil rate auto-fills the Est. BOPD loss when a well is reported down."
         />
 
         <div className="flex items-center gap-3">

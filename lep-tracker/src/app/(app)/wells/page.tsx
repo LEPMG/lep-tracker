@@ -4,7 +4,13 @@ import { getSessionUser } from "@/lib/auth";
 import { canManage } from "@/lib/permissions";
 import { PageHeader, Badge, EmptyState } from "@/components/ui";
 import { fmtNum } from "@/lib/format";
-import { createBattery, createWell, createTank, setWellStatus } from "./actions";
+import {
+  createBattery,
+  createWell,
+  createTank,
+  setWellStatus,
+  setWellTest,
+} from "./actions";
 import { WellFilters } from "@/components/Filters";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +39,9 @@ interface WellRow {
   battery_name: string | null;
   field: string | null;
   state: string | null;
+  test_oil_bopd: number | null;
+  test_water_bwpd: number | null;
+  test_gas_mcfd: number | null;
 }
 
 export default async function WellsPage({
@@ -313,6 +322,40 @@ export default async function WellsPage({
                     <input name="state" className="input" />
                   </div>
                 </div>
+                <div>
+                  <label className="label">
+                    Well test (used to auto-estimate downtime loss)
+                  </label>
+                  <div className="grid grid-cols-4 gap-2">
+                    <input
+                      name="test_oil_bopd"
+                      type="number"
+                      step="any"
+                      className="input"
+                      placeholder="Oil BOPD"
+                    />
+                    <input
+                      name="test_water_bwpd"
+                      type="number"
+                      step="any"
+                      className="input"
+                      placeholder="Water BWPD"
+                    />
+                    <input
+                      name="test_gas_mcfd"
+                      type="number"
+                      step="any"
+                      className="input"
+                      placeholder="Gas MCFD"
+                    />
+                    <input
+                      name="test_date"
+                      type="date"
+                      className="input"
+                      title="Test date"
+                    />
+                  </div>
+                </div>
                 <button className="btn-primary w-full">Save well</button>
               </form>
             </details>
@@ -340,6 +383,9 @@ export default async function WellsPage({
                   <th className="th">Battery</th>
                   <th className="th">Field</th>
                   <th className="th">State</th>
+                  <th className="th" title="Well test: oil / water / gas">
+                    Test O/W/G
+                  </th>
                   <th className="th">Status</th>
                   {user!.role !== "MGMT_RO" && <th className="th">Set status</th>}
                 </tr>
@@ -352,6 +398,67 @@ export default async function WellsPage({
                     <td className="td">{w.battery_name || "—"}</td>
                     <td className="td">{w.field || "—"}</td>
                     <td className="td">{w.state || "—"}</td>
+                    <td className="td whitespace-nowrap">
+                      {manage ? (
+                        <details className="relative">
+                          <summary className="cursor-pointer list-none text-xs text-slate-600">
+                            {fmtNum(w.test_oil_bopd, 0)} /{" "}
+                            {fmtNum(w.test_water_bwpd, 0)} /{" "}
+                            {fmtNum(w.test_gas_mcfd, 0)}
+                          </summary>
+                          <form
+                            action={setWellTest}
+                            className="card absolute left-0 z-10 mt-2 w-64 space-y-2 p-3"
+                          >
+                            <input type="hidden" name="id" value={w.id} />
+                            <div className="text-xs font-semibold text-slate-500">
+                              Well test rates
+                            </div>
+                            <div className="grid grid-cols-3 gap-1">
+                              <input
+                                name="test_oil_bopd"
+                                type="number"
+                                step="any"
+                                className="input !py-1 !text-xs"
+                                placeholder="Oil"
+                                defaultValue={w.test_oil_bopd ?? ""}
+                              />
+                              <input
+                                name="test_water_bwpd"
+                                type="number"
+                                step="any"
+                                className="input !py-1 !text-xs"
+                                placeholder="Water"
+                                defaultValue={w.test_water_bwpd ?? ""}
+                              />
+                              <input
+                                name="test_gas_mcfd"
+                                type="number"
+                                step="any"
+                                className="input !py-1 !text-xs"
+                                placeholder="Gas"
+                                defaultValue={w.test_gas_mcfd ?? ""}
+                              />
+                            </div>
+                            <input
+                              name="test_date"
+                              type="date"
+                              className="input !py-1 !text-xs"
+                              title="Test date"
+                            />
+                            <button className="btn-primary w-full !py-1 !text-xs">
+                              Save test
+                            </button>
+                          </form>
+                        </details>
+                      ) : (
+                        <span className="text-xs text-slate-600">
+                          {fmtNum(w.test_oil_bopd, 0)} /{" "}
+                          {fmtNum(w.test_water_bwpd, 0)} /{" "}
+                          {fmtNum(w.test_gas_mcfd, 0)}
+                        </span>
+                      )}
+                    </td>
                     <td className="td">
                       <Badge value={w.status} />
                     </td>

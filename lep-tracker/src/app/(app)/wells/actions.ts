@@ -35,8 +35,9 @@ export async function createWell(formData: FormData) {
   const name = String(formData.get("name") || "").trim();
   if (!name) return;
   await query(
-    `insert into wells (name, api_number, battery_id, field, county, state, status)
-     values ($1,$2,$3,$4,$5,$6,$7)`,
+    `insert into wells (name, api_number, battery_id, field, county, state, status,
+                        test_oil_bopd, test_water_bwpd, test_gas_mcfd, test_date)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
     [
       name,
       strOrNull(formData.get("api_number")),
@@ -45,6 +46,10 @@ export async function createWell(formData: FormData) {
       strOrNull(formData.get("county")),
       strOrNull(formData.get("state")),
       String(formData.get("status") || "UP"),
+      numOrNull(formData.get("test_oil_bopd")),
+      numOrNull(formData.get("test_water_bwpd")),
+      numOrNull(formData.get("test_gas_mcfd")),
+      strOrNull(formData.get("test_date")),
     ]
   );
   revalidatePath("/wells");
@@ -70,6 +75,26 @@ export async function createTank(formData: FormData) {
   );
   revalidatePath("/wells");
   revalidatePath("/production");
+}
+
+export async function setWellTest(formData: FormData) {
+  await assertManage();
+  const id = String(formData.get("id"));
+  await query(
+    `update wells set
+       test_oil_bopd=$1, test_water_bwpd=$2, test_gas_mcfd=$3,
+       test_date=coalesce($4, test_date), updated_at=now()
+     where id=$5`,
+    [
+      numOrNull(formData.get("test_oil_bopd")),
+      numOrNull(formData.get("test_water_bwpd")),
+      numOrNull(formData.get("test_gas_mcfd")),
+      strOrNull(formData.get("test_date")),
+      id,
+    ]
+  );
+  revalidatePath("/wells");
+  revalidatePath("/downtime");
 }
 
 export async function setWellStatus(formData: FormData) {
@@ -190,14 +215,26 @@ export async function importData(formData: FormData) {
     const status = pick(r, "status").toUpperCase();
     const st = WELL_STATUSES.includes(status) ? status : "UP";
     const api = sn(pick(r, "api", "api_number", "api number", "api #"));
+    const oil = nn(pick(r, "test_oil_bopd", "oil_bopd", "oil bopd", "oil", "bopd"));
+    const water = nn(
+      pick(r, "test_water_bwpd", "water_bwpd", "water bwpd", "water", "bwpd")
+    );
+    const gas = nn(pick(r, "test_gas_mcfd", "gas_mcfd", "gas mcfd", "gas", "mcfd"));
+    const testDate = sn(pick(r, "test_date", "test date"));
     if (api) {
       await query(
-        `insert into wells (name,api_number,battery_id,status,field,county,state)
-         values ($1,$2,$3,$4,$5,$6,$7)
+        `insert into wells (name,api_number,battery_id,status,field,county,state,
+                            test_oil_bopd,test_water_bwpd,test_gas_mcfd,test_date)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          on conflict (api_number) do update set
            name=excluded.name, battery_id=excluded.battery_id,
            status=excluded.status, field=excluded.field,
-           county=excluded.county, state=excluded.state, updated_at=now()`,
+           county=excluded.county, state=excluded.state,
+           test_oil_bopd=coalesce(excluded.test_oil_bopd, wells.test_oil_bopd),
+           test_water_bwpd=coalesce(excluded.test_water_bwpd, wells.test_water_bwpd),
+           test_gas_mcfd=coalesce(excluded.test_gas_mcfd, wells.test_gas_mcfd),
+           test_date=coalesce(excluded.test_date, wells.test_date),
+           updated_at=now()`,
         [
           name,
           api,
@@ -206,12 +243,17 @@ export async function importData(formData: FormData) {
           sn(pick(r, "field", "lease")),
           sn(pick(r, "county")),
           sn(pick(r, "state")),
+          oil,
+          water,
+          gas,
+          testDate,
         ]
       );
     } else {
       await query(
-        `insert into wells (name,api_number,battery_id,status,field,county,state)
-         values ($1,null,$2,$3,$4,$5,$6)`,
+        `insert into wells (name,api_number,battery_id,status,field,county,state,
+                            test_oil_bopd,test_water_bwpd,test_gas_mcfd,test_date)
+         values ($1,null,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [
           name,
           bid,
@@ -219,6 +261,10 @@ export async function importData(formData: FormData) {
           sn(pick(r, "field", "lease")),
           sn(pick(r, "county")),
           sn(pick(r, "state")),
+          oil,
+          water,
+          gas,
+          testDate,
         ]
       );
     }
