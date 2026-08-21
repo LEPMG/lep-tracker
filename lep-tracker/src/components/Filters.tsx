@@ -2,36 +2,75 @@
 
 import { useRouter } from "next/navigation";
 
+/** One row per well — the raw data the cascading options are derived from. */
+export interface FilterRow {
+  state: string | null;
+  county: string | null;
+  field: string | null;
+}
+
+function uniq(values: (string | null)[]): string[] {
+  return Array.from(
+    new Set(values.filter((v): v is string => !!v && v.trim() !== ""))
+  ).sort();
+}
+
 export function WellFilters({
   basePath,
-  states,
-  fields,
+  rows,
   state,
+  county,
   field,
   count,
   extra = {},
 }: {
   basePath: string;
-  states: string[];
-  fields: string[];
+  rows: FilterRow[];
   state: string;
+  county: string;
   field: string;
   count: number;
   extra?: Record<string, string>;
 }) {
   const router = useRouter();
 
-  function go(next: { state?: string; field?: string }) {
-    const params = new URLSearchParams({ ...extra });
+  // Each dropdown only offers values that exist under the choices above it.
+  const inState = (r: FilterRow, s: string) => !s || r.state === s;
+  const inCounty = (r: FilterRow, c: string) => !c || r.county === c;
+
+  const states = uniq(rows.map((r) => r.state));
+  const counties = uniq(
+    rows.filter((r) => inState(r, state)).map((r) => r.county)
+  );
+  const fields = uniq(
+    rows
+      .filter((r) => inState(r, state) && inCounty(r, county))
+      .map((r) => r.field)
+  );
+
+  function go(next: { state?: string; county?: string; field?: string }) {
     const s = next.state ?? state;
-    const f = next.field ?? field;
+    let c = next.county ?? county;
+    let f = next.field ?? field;
+
+    // Drop a narrower choice that no longer exists under the new wider one.
+    if (c && !rows.some((r) => inState(r, s) && r.county === c)) c = "";
+    if (
+      f &&
+      !rows.some((r) => inState(r, s) && inCounty(r, c) && r.field === f)
+    ) {
+      f = "";
+    }
+
+    const params = new URLSearchParams({ ...extra });
     if (s) params.set("state", s);
+    if (c) params.set("county", c);
     if (f) params.set("field", f);
     const qs = params.toString();
     router.push(qs ? `${basePath}?${qs}` : basePath);
   }
 
-  const hasFilter = state || field;
+  const hasFilter = state || county || field;
 
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -47,6 +86,18 @@ export function WellFilters({
         {states.map((s) => (
           <option key={s} value={s}>
             {s}
+          </option>
+        ))}
+      </select>
+      <select
+        value={county}
+        onChange={(e) => go({ county: e.target.value })}
+        className="input !w-auto !py-1.5 text-sm"
+      >
+        <option value="">All counties</option>
+        {counties.map((c) => (
+          <option key={c} value={c}>
+            {c}
           </option>
         ))}
       </select>

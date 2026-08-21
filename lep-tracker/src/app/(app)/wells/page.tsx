@@ -11,7 +11,7 @@ import {
   setWellStatus,
   setWellTest,
 } from "./actions";
-import { WellFilters } from "@/components/Filters";
+import { WellFilters, type FilterRow } from "@/components/Filters";
 
 export const dynamic = "force-dynamic";
 
@@ -47,12 +47,13 @@ interface WellRow {
 export default async function WellsPage({
   searchParams,
 }: {
-  searchParams: { state?: string; field?: string };
+  searchParams: { state?: string; county?: string; field?: string };
 }) {
   const user = await getSessionUser();
   const manage = canManage(user!.role);
 
   const fState = searchParams.state || "";
+  const fCounty = searchParams.county || "";
   const fField = searchParams.field || "";
   const conds: string[] = [];
   const params: any[] = [];
@@ -60,27 +61,32 @@ export default async function WellsPage({
     params.push(fState);
     conds.push(`w.state = $${params.length}`);
   }
+  if (fCounty) {
+    params.push(fCounty);
+    conds.push(`w.county = $${params.length}`);
+  }
   if (fField) {
     params.push(fField);
     conds.push(`w.field = $${params.length}`);
   }
   const where = conds.length ? `where ${conds.join(" and ")}` : "";
 
-  const [batteries, tanks, wells, states, fields] = await Promise.all([
+  // active wells first, inactive last, then alphabetical within each status
+  const statusOrder = `case w.status
+      when 'UP' then 0 when 'DOWN' then 1 when 'SHUT_IN' then 2 else 3 end`;
+
+  const [batteries, tanks, wells, filterRows] = await Promise.all([
     query<BatteryRow>(`select * from batteries order by name`),
     query<TankRow>(`select * from tanks where active order by name`),
     query<WellRow>(
       `select w.*, b.name as battery_name from wells w
          left join batteries b on b.id = w.battery_id
         ${where}
-        order by w.name`,
+        order by ${statusOrder}, w.name`,
       params
     ),
-    query<{ v: string }>(
-      `select distinct state as v from wells where state is not null and state <> '' order by state`
-    ),
-    query<{ v: string }>(
-      `select distinct field as v from wells where field is not null and field <> '' order by field`
+    query<FilterRow>(
+      `select distinct state, county, field from wells`
     ),
   ]);
 
@@ -364,9 +370,9 @@ export default async function WellsPage({
 
         <WellFilters
           basePath="/wells"
-          states={states.map((s) => s.v)}
-          fields={fields.map((f) => f.v)}
+          rows={filterRows}
           state={fState}
+          county={fCounty}
           field={fField}
           count={wells.length}
         />

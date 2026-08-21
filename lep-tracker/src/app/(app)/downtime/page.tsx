@@ -2,7 +2,7 @@ import { query } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { PageHeader, Badge, EmptyState, StatCard } from "@/components/ui";
 import { fmtDateTime, durationSince, fmtNum } from "@/lib/format";
-import { WellFilters } from "@/components/Filters";
+import { WellFilters, type FilterRow } from "@/components/Filters";
 import ReportDownForm from "./ReportDownForm";
 import { reportDowntime, resolveDowntime } from "./actions";
 
@@ -26,19 +26,24 @@ interface DownRow {
 export default async function DowntimePage({
   searchParams,
 }: {
-  searchParams: { state?: string; field?: string };
+  searchParams: { state?: string; county?: string; field?: string };
 }) {
   const user = await getSessionUser();
   const canEdit = user!.role !== "MGMT_RO";
 
   const fState = searchParams.state || "";
+  const fCounty = searchParams.county || "";
   const fField = searchParams.field || "";
-  // filter down events by the associated well's (or battery's) state/field
+  // filter down events by the associated well's (or battery's) state/county/field
   const filt: string[] = [];
   const fp: any[] = [];
   if (fState) {
     fp.push(fState);
     filt.push(`(w.state = $${fp.length} or b.state = $${fp.length})`);
+  }
+  if (fCounty) {
+    fp.push(fCounty);
+    filt.push(`(w.county = $${fp.length} or b.county = $${fp.length})`);
   }
   if (fField) {
     fp.push(fField);
@@ -54,7 +59,7 @@ export default async function DowntimePage({
       left join batteries b on b.id = d.battery_id
       left join users u on u.id = d.owner_id`;
 
-  const [open, resolved, wells, users, states, fields] = await Promise.all([
+  const [open, resolved, wells, users, filterRows] = await Promise.all([
     query<DownRow>(
       `${base} where d.status='OPEN'${extra} order by d.start_at asc`,
       fp
@@ -70,11 +75,8 @@ export default async function DowntimePage({
     query<{ id: string; name: string }>(
       `select id, name from users where active order by name`
     ),
-    query<{ v: string }>(
-      `select distinct state as v from wells where state is not null and state <> '' order by state`
-    ),
-    query<{ v: string }>(
-      `select distinct field as v from wells where field is not null and field <> '' order by field`
+    query<FilterRow>(
+      `select distinct state, county, field from wells`
     ),
   ]);
 
@@ -113,9 +115,9 @@ export default async function DowntimePage({
 
       <WellFilters
         basePath="/downtime"
-        states={states.map((s) => s.v)}
-        fields={fields.map((f) => f.v)}
+        rows={filterRows}
         state={fState}
+        county={fCounty}
         field={fField}
         count={open.length + resolved.length}
       />
