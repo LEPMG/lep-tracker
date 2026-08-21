@@ -107,8 +107,46 @@ export async function setWellStatus(formData: FormData) {
     status,
     id,
   ]);
+
+  // Keep Down Wells and the dashboard in step with the status set here: going
+  // DOWN opens a downtime event, coming off DOWN resolves the open one.
+  if (status === "DOWN") {
+    await openDowntimeForWell(id, user.id);
+  } else {
+    await resolveOpenDowntimeForWell(id);
+  }
+
   revalidatePath("/wells");
   revalidatePath("/downtime");
+  revalidatePath("/");
+}
+
+/**
+ * Open a downtime event for a well unless one is already open. The estimated
+ * loss comes from the well's own oil test rate, so the dashboard totals reflect
+ * the well tests already in the system.
+ */
+async function openDowntimeForWell(wellId: string, ownerId: string) {
+  await query(
+    `insert into downtime_events
+       (well_id, battery_id, reason, start_at, est_bopd_loss, owner_id)
+     select w.id, w.battery_id, $2, now(), w.test_oil_bopd, $3
+       from wells w
+      where w.id = $1
+        and not exists (
+          select 1 from downtime_events d
+           where d.well_id = w.id and d.status = 'OPEN'
+        )`,
+    [wellId, "Marked down from Wells page", ownerId]
+  );
+}
+
+async function resolveOpenDowntimeForWell(wellId: string) {
+  await query(
+    `update downtime_events set status='RESOLVED', end_at=now(), updated_at=now()
+      where well_id=$1 and status='OPEN'`,
+    [wellId]
+  );
 }
 
 function strOrNull(v: FormDataEntryValue | null): string | null {
