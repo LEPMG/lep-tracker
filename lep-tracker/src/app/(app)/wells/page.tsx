@@ -383,8 +383,14 @@ export default async function WellsPage({
                   <th className="th">Battery</th>
                   <th className="th">Field</th>
                   <th className="th">State</th>
-                  <th className="th" title="Well test: oil / water / gas">
-                    Test O/W/G
+                  <th className="th" title="Well test: oil rate">
+                    Oil (BOPD)
+                  </th>
+                  <th className="th" title="Well test: water rate">
+                    Water (BWPD)
+                  </th>
+                  <th className="th" title="Well test: gas rate">
+                    Gas (MCFD)
                   </th>
                   <th className="th">Status</th>
                   {user!.role !== "MGMT_RO" && <th className="th">Set status</th>}
@@ -398,67 +404,9 @@ export default async function WellsPage({
                     <td className="td">{w.battery_name || "—"}</td>
                     <td className="td">{w.field || "—"}</td>
                     <td className="td">{w.state || "—"}</td>
-                    <td className="td whitespace-nowrap">
-                      {manage ? (
-                        <details className="relative">
-                          <summary className="cursor-pointer list-none text-xs text-slate-600">
-                            {fmtNum(w.test_oil_bopd, 0)} /{" "}
-                            {fmtNum(w.test_water_bwpd, 0)} /{" "}
-                            {fmtNum(w.test_gas_mcfd, 0)}
-                          </summary>
-                          <form
-                            action={setWellTest}
-                            className="card absolute left-0 z-10 mt-2 w-64 space-y-2 p-3"
-                          >
-                            <input type="hidden" name="id" value={w.id} />
-                            <div className="text-xs font-semibold text-slate-500">
-                              Well test rates
-                            </div>
-                            <div className="grid grid-cols-3 gap-1">
-                              <input
-                                name="test_oil_bopd"
-                                type="number"
-                                step="any"
-                                className="input !py-1 !text-xs"
-                                placeholder="Oil"
-                                defaultValue={w.test_oil_bopd ?? ""}
-                              />
-                              <input
-                                name="test_water_bwpd"
-                                type="number"
-                                step="any"
-                                className="input !py-1 !text-xs"
-                                placeholder="Water"
-                                defaultValue={w.test_water_bwpd ?? ""}
-                              />
-                              <input
-                                name="test_gas_mcfd"
-                                type="number"
-                                step="any"
-                                className="input !py-1 !text-xs"
-                                placeholder="Gas"
-                                defaultValue={w.test_gas_mcfd ?? ""}
-                              />
-                            </div>
-                            <input
-                              name="test_date"
-                              type="date"
-                              className="input !py-1 !text-xs"
-                              title="Test date"
-                            />
-                            <button className="btn-primary w-full !py-1 !text-xs">
-                              Save test
-                            </button>
-                          </form>
-                        </details>
-                      ) : (
-                        <span className="text-xs text-slate-600">
-                          {fmtNum(w.test_oil_bopd, 0)} /{" "}
-                          {fmtNum(w.test_water_bwpd, 0)} /{" "}
-                          {fmtNum(w.test_gas_mcfd, 0)}
-                        </span>
-                      )}
-                    </td>
+                    <TestRateCell well={w} value={w.test_oil_bopd} manage={manage} />
+                    <TestRateCell well={w} value={w.test_water_bwpd} manage={manage} />
+                    <TestRateCell well={w} value={w.test_gas_mcfd} manage={manage} />
                     <td className="td">
                       <Badge value={w.status} />
                     </td>
@@ -490,5 +438,77 @@ export default async function WellsPage({
         )}
       </section>
     </div>
+  );
+}
+
+function TestRateCell({
+  well,
+  value,
+  manage,
+}: {
+  well: WellRow;
+  value: number | null;
+  manage: boolean;
+}) {
+  const text = fmtNum(value, 0);
+  if (!manage) {
+    return (
+      <td className="td whitespace-nowrap">
+        <span className="text-xs text-slate-600">{text}</span>
+      </td>
+    );
+  }
+  return (
+    <td className="td whitespace-nowrap">
+      <details className="relative">
+        <summary className="cursor-pointer list-none text-xs text-slate-600">
+          {text}
+        </summary>
+        <form
+          action={setWellTest}
+          className="card absolute left-0 z-10 mt-2 w-64 space-y-2 p-3"
+        >
+          <input type="hidden" name="id" value={well.id} />
+          <div className="text-xs font-semibold text-slate-500">
+            Well test rates
+          </div>
+          <div className="grid grid-cols-3 gap-1">
+            <input
+              name="test_oil_bopd"
+              type="number"
+              step="any"
+              className="input !py-1 !text-xs"
+              placeholder="Oil"
+              defaultValue={well.test_oil_bopd ?? ""}
+            />
+            <input
+              name="test_water_bwpd"
+              type="number"
+              step="any"
+              className="input !py-1 !text-xs"
+              placeholder="Water"
+              defaultValue={well.test_water_bwpd ?? ""}
+            />
+            <input
+              name="test_gas_mcfd"
+              type="number"
+              step="any"
+              className="input !py-1 !text-xs"
+              placeholder="Gas"
+              defaultValue={well.test_gas_mcfd ?? ""}
+            />
+          </div>
+          <input
+            name="test_date"
+            type="date"
+            className="input !py-1 !text-xs"
+            title="Test date"
+          />
+          <button className="btn-primary w-full !py-1 !text-xs">
+            Save test
+          </button>
+        </form>
+      </details>
+    </td>
   );
 }
