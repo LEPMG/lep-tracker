@@ -11,7 +11,7 @@ import {
   setWellStatus,
   setWellTest,
 } from "./actions";
-import { WellFilters, type FilterRow } from "@/components/Filters";
+import { PageFilters, type FilterRow } from "@/components/Filters";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +38,7 @@ interface WellRow {
   status: string;
   battery_name: string | null;
   field: string | null;
+  county: string | null;
   state: string | null;
   test_oil_bopd: number | null;
   test_water_bwpd: number | null;
@@ -47,7 +48,12 @@ interface WellRow {
 export default async function WellsPage({
   searchParams,
 }: {
-  searchParams: { state?: string; county?: string; field?: string };
+  searchParams: {
+    state?: string;
+    county?: string;
+    field?: string;
+    battery?: string;
+  };
 }) {
   const user = await getSessionUser();
   const manage = canManage(user!.role);
@@ -55,38 +61,78 @@ export default async function WellsPage({
   const fState = searchParams.state || "";
   const fCounty = searchParams.county || "";
   const fField = searchParams.field || "";
-  const conds: string[] = [];
-  const params: any[] = [];
-  if (fState) {
-    params.push(fState);
-    conds.push(`w.state = $${params.length}`);
-  }
-  if (fCounty) {
-    params.push(fCounty);
-    conds.push(`w.county = $${params.length}`);
-  }
-  if (fField) {
-    params.push(fField);
-    conds.push(`w.field = $${params.length}`);
-  }
-  const where = conds.length ? `where ${conds.join(" and ")}` : "";
+  const fBattery = searchParams.battery || "";
 
-  // active wells first, inactive last, then alphabetical within each status
+  /**
+   * The same four filters drive both sections, so each query builds its own
+   * where-clause off the shared values. `col` names the table alias/column the
+   * dimension lives on for that query.
+   */
+  function buildWhere(cols: {
+    state: string;
+    county: string;
+    field: string;
+    battery: string;
+  }) {
+    const conds: string[] = [];
+    const params: any[] = [];
+    const add = (col: string, val: string) => {
+      if (!val) return;
+      params.push(val);
+      conds.push(`${col} = $${params.length}`);
+    };
+    add(cols.state, fState);
+    add(cols.county, fCounty);
+    add(cols.field, fField);
+    add(cols.battery, fBattery);
+    return {
+      where: conds.length ? `where ${conds.join(" and ")}` : "",
+      params,
+    };
+  }
+
+  const bat = buildWhere({
+    state: "state",
+    county: "county",
+    field: "field",
+    battery: "name",
+  });
+  const wel = buildWhere({
+    state: "w.state",
+    county: "w.county",
+    field: "w.field",
+    battery: "b.name",
+  });
+
+  const hasFilter = !!(fState || fCounty || fField || fBattery);
+
+  // UP first, then DOWN, SHUT_IN, and INACTIVE last.
   const statusOrder = `case w.status
       when 'UP' then 0 when 'DOWN' then 1 when 'SHUT_IN' then 2 else 3 end`;
 
-  const [batteries, tanks, wells, filterRows] = await Promise.all([
-    query<BatteryRow>(`select * from batteries order by name`),
+  const [batteries, allBatteries, tanks, wells, filterRows] = await Promise.all([
+    // grouped by state, so one state's batteries stay together
+    query<BatteryRow>(
+      `select * from batteries ${bat.where}
+        order by state, field, name`,
+      bat.params
+    ),
+    // unfiltered — the "Add Well" battery dropdown must always offer them all
+    query<BatteryRow>(`select * from batteries order by state, field, name`),
     query<TankRow>(`select * from tanks where active order by name`),
     query<WellRow>(
       `select w.*, b.name as battery_name from wells w
          left join batteries b on b.id = w.battery_id
-        ${where}
-        order by ${statusOrder}, w.name`,
-      params
+        ${wel.where}
+        order by w.state, w.field, b.name, ${statusOrder}, w.name`,
+      wel.params
     ),
+    // options come from the union of both sections' data
     query<FilterRow>(
-      `select distinct state, county, field from wells`
+      `select distinct w.state, w.county, w.field, b.name as battery
+         from wells w left join batteries b on b.id = w.battery_id
+       union
+       select distinct state, county, field, name as battery from batteries`
     ),
   ]);
 
@@ -104,10 +150,25 @@ export default async function WellsPage({
         }
       />
 
+      {/* One filter, both sections */}
+      <PageFilters
+        basePath="/wells"
+        rows={filterRows}
+        state={fState}
+        county={fCounty}
+        field={fField}
+        battery={fBattery}
+      />
+
       {/* Batteries + tanks */}
       <section className="mb-8">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Batteries & Tanks</h2>
+          <h2 className="text-lg font-semibold">
+            Batteries & Tanks{" "}
+            <span className="ml-1 text-xs font-normal text-slate-400">
+              {batteries.length} shown
+            </span>
+          </h2>
           {manage && (
             <details className="relative">
               <summary className="btn-primary cursor-pointer list-none">
@@ -149,8 +210,16 @@ export default async function WellsPage({
 
         {batteries.length === 0 ? (
           <EmptyState
-            title="No batteries yet"
-            hint={manage ? "Add your first battery to begin." : undefined}
+            title={
+              hasFilter
+                ? "No batteries match these filters"
+                : "No batteries yet"
+            }
+            hint={
+              !hasFilter && manage
+                ? "Add your first battery to begin."
+                : undefined
+            }
           />
         ) : (
           <div className="space-y-4">
@@ -274,7 +343,12 @@ export default async function WellsPage({
       {/* Wells */}
       <section>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Wells</h2>
+          <h2 className="text-lg font-semibold">
+            Wells{" "}
+            <span className="ml-1 text-xs font-normal text-slate-400">
+              {wells.length} shown
+            </span>
+          </h2>
           {manage && (
             <details className="relative">
               <summary className="btn-primary cursor-pointer list-none">
@@ -307,7 +381,7 @@ export default async function WellsPage({
                   <label className="label">Battery</label>
                   <select name="battery_id" className="input">
                     <option value="">— none —</option>
-                    {batteries.map((b) => (
+                    {allBatteries.map((b) => (
                       <option key={b.id} value={b.id}>
                         {b.name}
                       </option>
@@ -367,15 +441,6 @@ export default async function WellsPage({
             </details>
           )}
         </div>
-
-        <WellFilters
-          basePath="/wells"
-          rows={filterRows}
-          state={fState}
-          county={fCounty}
-          field={fField}
-          count={wells.length}
-        />
 
         {wells.length === 0 ? (
           <EmptyState title="No wells match these filters" />

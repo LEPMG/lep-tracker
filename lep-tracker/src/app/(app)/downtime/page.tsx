@@ -2,7 +2,7 @@ import { query } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { PageHeader, Badge, EmptyState, StatCard } from "@/components/ui";
 import { fmtDateTime, durationSince, fmtNum } from "@/lib/format";
-import { WellFilters, type FilterRow } from "@/components/Filters";
+import { PageFilters, type FilterRow } from "@/components/Filters";
 import ReportDownForm from "./ReportDownForm";
 import { reportDowntime, resolveDowntime } from "./actions";
 
@@ -113,7 +113,7 @@ export default async function DowntimePage({
         />
       </div>
 
-      <WellFilters
+      <PageFilters
         basePath="/downtime"
         rows={filterRows}
         state={fState}
