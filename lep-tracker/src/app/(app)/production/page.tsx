@@ -9,36 +9,107 @@ import {
   type TankKind,
 } from "@/lib/gauge";
 import { saveGaugeReading, addRunTicket } from "./actions";
+import { ProductionFilters, type BatteryOption } from "./ProductionFilters";
+import { TrendChart, type TrendPoint } from "./TrendChart";
 
 export const dynamic = "force-dynamic";
+
+const RANGES = [
+  { key: "7d", label: "Last 7 days" },
+  { key: "30d", label: "Last 30 days" },
+  { key: "90d", label: "Last 90 days" },
+  { key: "month", label: "This month" },
+  { key: "all", label: "All" },
+] as const;
+
+const DEFAULT_RANGE = "30d";
+
+/** Start of the selected window, or null for "All". */
+function rangeStart(key: string): Date | null {
+  if (key === "all") return null;
+  const now = new Date();
+  if (key === "month") return new Date(now.getFullYear(), now.getMonth(), 1);
+  const days = key === "7d" ? 7 : key === "90d" ? 90 : 30;
+  const d = new Date(now);
+  d.setDate(d.getDate() - days);
+  return d;
+}
 
 export default async function ProductionPage({
   searchParams,
 }: {
-  searchParams: { battery?: string };
+  searchParams: {
+    battery?: string;
+    state?: string;
+    field?: string;
+    range?: string;
+  };
 }) {
   const user = await getSessionUser();
   const canEdit = user!.role !== "MGMT_RO";
 
-  const batteries = await query<{ id: string; name: string }>(
-    `select id, name from batteries where active order by name`
+  const batteries = await query<BatteryOption>(
+    `select id, name, state, field from batteries
+      where active order by state, field, name`
   );
 
-  const batteryId = searchParams.battery || batteries[0]?.id;
+  const fState = searchParams.state || "";
+  const fField = searchParams.field || "";
+  const range = RANGES.some((r) => r.key === searchParams.range)
+    ? searchParams.range!
+    : DEFAULT_RANGE;
+
+  // The State > Field dropdowns narrow which batteries are selectable; the
+  // loaded battery is whichever the URL names, so long as it survives that
+  // scope. Otherwise fall through to the first one that does.
+  const scoped = batteries.filter(
+    (b) =>
+      (!fState || b.state === fState) && (!fField || b.field === fField)
+  );
+  const batteryId =
+    searchParams.battery && scoped.some((b) => b.id === searchParams.battery)
+      ? searchParams.battery
+      : scoped[0]?.id;
+
+  function hrefWith(next: { range?: string }) {
+    const params = new URLSearchParams();
+    if (fState) params.set("state", fState);
+    if (fField) params.set("field", fField);
+    if (batteryId) params.set("battery", batteryId);
+    params.set("range", next.range ?? range);
+    return `/production?${params.toString()}`;
+  }
 
   if (!batteryId) {
     return (
       <div>
         <PageHeader title="Production" />
+        {batteries.length > 0 && (
+          <ProductionFilters
+            batteries={batteries}
+            state={fState}
+            field={fField}
+            batteryId=""
+            range={range}
+          />
+        )}
         <EmptyState
-          title="No batteries set up yet"
-          hint="Add a battery and its tanks under Wells & Batteries first."
+          title={
+            batteries.length === 0
+              ? "No batteries set up yet"
+              : "No batteries match this State / Field"
+          }
+          hint={
+            batteries.length === 0
+              ? "Add a battery and its tanks under Wells & Batteries first."
+              : "Widen the filter above to pick a battery."
+          }
         />
       </div>
     );
   }
 
-  const [tanks, readingRows, tickets] = await Promise.all([
+  const [tanks, readingRows, tickets, downRows] = await Promise.all([
     query<any>(
       `select id, name, type, bbls_per_inch from tanks
         where battery_id=$1 and active order by type, name`,
@@ -57,6 +128,24 @@ export default async function ProductionPage({
     ),
     query<any>(
       `select * from run_tickets where battery_id=$1 order by ticket_date desc`,
+      [batteryId]
+    ),
+    /**
+     * Down-well KPIs for this battery, matching Down Wells / Dashboard: a well
+     * counts as down while it has an OPEN downtime event. Deduped to distinct
+     * wells first — two open events on one well is one well down, and its test
+     * rates must not be counted twice.
+     */
+    query<{ wells_down: number; oil_lost: number; gas_lost: number }>(
+      `select count(*)::int as wells_down,
+              coalesce(sum(test_oil_bopd), 0) as oil_lost,
+              coalesce(sum(test_gas_mcfd), 0) as gas_lost
+         from (
+           select distinct w.id, w.test_oil_bopd, w.test_gas_mcfd
+             from downtime_events d
+             join wells w on w.id = d.well_id
+            where d.status = 'OPEN' and w.battery_id = $1
+         ) down_wells`,
       [batteryId]
     ),
   ]);
@@ -87,6 +176,25 @@ export default async function ProductionPage({
   );
   const latest = periods[0];
 
+  // Periods are always computed from the full history — a period needs the
+  // gauge *before* the window to exist at all — then trimmed for display.
+  const start = rangeStart(range);
+  const ranged = start
+    ? periods.filter((p) => p.toDate.getTime() >= start.getTime())
+    : periods;
+  const rangeLabel =
+    RANGES.find((r) => r.key === range)?.label ?? DEFAULT_RANGE;
+
+  // chart reads left-to-right, oldest first
+  const trend: TrendPoint[] = [...ranged]
+    .reverse()
+    .map((p) => ({ date: p.toDate, bopd: p.bopd, bwpd: p.bwpd }));
+
+  const down = downRows[0];
+  const wellsDown = Number(down?.wells_down ?? 0);
+  const oilLost = Number(down?.oil_lost ?? 0);
+  const gasLost = Number(down?.gas_lost ?? 0);
+
   // oil sales summary
   const oilSales = tickets.filter((t: any) => t.type === "OIL_SALE");
   const oilSoldTotal = oilSales.reduce(
@@ -108,22 +216,14 @@ export default async function ProductionPage({
         subtitle="Enter tank gauges — the app converts to barrels and computes BOPD / BWPD automatically."
       />
 
-      {/* battery selector */}
-      <div className="mb-6 flex flex-wrap gap-2">
-        {batteries.map((b) => (
-          <Link
-            key={b.id}
-            href={`/production?battery=${b.id}`}
-            className={`rounded-full px-3 py-1 text-sm font-medium ${
-              b.id === batteryId
-                ? "bg-brand-600 text-white"
-                : "bg-white text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            {b.name}
-          </Link>
-        ))}
-      </div>
+      {/* State > Field > Battery */}
+      <ProductionFilters
+        batteries={batteries}
+        state={fState}
+        field={fField}
+        batteryId={batteryId}
+        range={range}
+      />
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
         <StatCard
@@ -142,6 +242,27 @@ export default async function ProductionPage({
           sub="all tickets"
         />
         <StatCard label="Sales Revenue" value={fmtMoney(salesRevenue)} />
+        <StatCard
+          label="Wells Down"
+          value={wellsDown}
+          tone={wellsDown > 0 ? "danger" : "good"}
+          sub="open downtime events"
+          href="/downtime"
+        />
+        <StatCard
+          label="Est. Oil Lost"
+          value={fmtNum(oilLost, 0)}
+          tone="warn"
+          sub="BOPD, from well tests"
+          href="/downtime"
+        />
+        <StatCard
+          label="Est. Gas Lost"
+          value={fmtNum(gasLost, 0)}
+          tone="warn"
+          sub="MCFD, from well tests"
+          href="/downtime"
+        />
       </div>
 
       {tanks.length === 0 ? (
@@ -307,14 +428,124 @@ export default async function ProductionPage({
         </div>
       )}
 
+      {/* Gas meters — UI placeholder, no data model yet */}
+      <section className="mt-8">
+        <h2 className="mb-1 text-lg font-semibold">Gas Meters</h2>
+        <p className="mb-3 text-xs text-slate-400">
+          Where daily gas (MCF) will be entered, alongside the tank gauges.
+        </p>
+        <div className="card p-4">
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="flex-1">
+              <div className="text-sm font-medium text-slate-700">
+                No gas meters set up for this battery yet
+              </div>
+              <p className="mt-1 max-w-2xl text-xs text-slate-400">
+                Gas meters aren&apos;t configured for these batteries — the
+                meter list and the daily MCF reading it feeds still need a data
+                model, so nothing here is saved yet. The entry below is a
+                preview of the shape it will take: one row per meter, a reading
+                date, and the day&apos;s MCF.
+              </p>
+            </div>
+            <span className="badge bg-slate-100 text-slate-500">
+              Coming soon
+            </span>
+          </div>
+
+          {/* Disabled preview of the eventual entry form */}
+          <div
+            className="mt-4 space-y-2 opacity-60"
+            aria-hidden="true"
+          >
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div>
+                <label className="label">Reading date</label>
+                <input type="date" className="input" disabled />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="label">Meter</label>
+                <select className="input" disabled>
+                  <option>— no meters configured —</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div>
+                <label className="label">MCF today</label>
+                <input
+                  className="input"
+                  placeholder="0.0"
+                  disabled
+                />
+              </div>
+              <div>
+                <label className="label">Line pressure (psi)</label>
+                <input className="input" placeholder="—" disabled />
+              </div>
+              <div>
+                <label className="label">Notes</label>
+                <input className="input" disabled />
+              </div>
+            </div>
+            <button className="btn-primary w-full" disabled>
+              Save gas reading
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Range selector — scopes the trend and the computed table below */}
+      <div className="mt-8 flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Range
+        </span>
+        {RANGES.map((r) => (
+          <Link
+            key={r.key}
+            href={hrefWith({ range: r.key })}
+            className={`rounded-full px-3 py-1 text-sm font-medium ${
+              r.key === range
+                ? "bg-brand-600 text-white"
+                : "bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            {r.label}
+          </Link>
+        ))}
+        <span className="ml-auto text-xs text-slate-400">
+          {ranged.length} of {periods.length} periods
+        </span>
+      </div>
+
+      {/* Trend */}
+      <h2 className="mb-3 mt-6 text-lg font-semibold">
+        Production Trend{" "}
+        <span className="text-xs font-normal text-slate-400">
+          {rangeLabel}
+        </span>
+      </h2>
+      <TrendChart points={trend} />
+
       {/* Computed production */}
       <h2 className="mb-3 mt-8 text-lg font-semibold">
-        Computed Production (BOPD / BWPD)
+        Computed Production (BOPD / BWPD){" "}
+        <span className="text-xs font-normal text-slate-400">
+          {rangeLabel}
+        </span>
       </h2>
-      {periods.length === 0 ? (
+      {ranged.length === 0 ? (
         <EmptyState
-          title="Need at least two gaugings"
-          hint="Production is computed from the change between consecutive gauge readings."
+          title={
+            periods.length === 0
+              ? "Need at least two gaugings"
+              : "No periods in this range"
+          }
+          hint={
+            periods.length === 0
+              ? "Production is computed from the change between consecutive gauge readings."
+              : "Widen the range above to see earlier periods."
+          }
         />
       ) : (
         <div className="card overflow-x-auto">
@@ -330,7 +561,7 @@ export default async function ProductionPage({
               </tr>
             </thead>
             <tbody>
-              {periods.map((p, i) => (
+              {ranged.map((p, i) => (
                 <tr key={i} className="border-b border-slate-50">
                   <td className="td">
                     {fmtDate(p.fromDate)} → {fmtDate(p.toDate)}
